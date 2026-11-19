@@ -1,9 +1,25 @@
 package pe.gob.devida.geodaismovil.controller;
-
+import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import org.locationtech.jts.geom.CoordinateSequence;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryFactory;
+import org.locationtech.jts.geom.LineString;
+import org.locationtech.jts.geom.Point;
+import org.locationtech.jts.geom.Polygon;
+import org.locationtech.jts.geom.PrecisionModel;
+import org.locationtech.jts.io.ParseException;
+import org.locationtech.jts.io.WKTReader;
+import org.locationtech.jts.io.WKTWriter;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -12,140 +28,301 @@ import org.springframework.web.bind.annotation.RestController;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.enums.ParameterIn;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import pe.gob.devida.geodaismovil.dto.RegistroParcelaRequest;
-import pe.gob.devida.geodaismovil.service.RegistroParcelaService;
-import tools.jackson.databind.JsonNode;
+
+import pe.gob.devida.geodaismovil.dto.RegistroParcelaDto;
+import pe.gob.devida.geodaismovil.model.RegistroParcela;
+import pe.gob.devida.geodaismovil.repository.RegistroParcelaRepository;
 
 @RestController
-@RequestMapping("/geodaismovil")
-@Tag(name = "Registros-de-parcela", description = "Sincronización y consulta de parcelas registradas desde GeoDAIS Móvil")
+@RequestMapping("/api/parcelas")
+@Tag(name = "Parcelas", description = "Registro, consulta paginada y borrado lógico de parcelas.")
 public class RegistroParcelaController {
+    private static final GeometryFactory GEOMETRY_FACTORY = new GeometryFactory(new PrecisionModel(), 4326);
 
-	private final RegistroParcelaService service;
+    private final RegistroParcelaRepository repository;
 
-	public RegistroParcelaController(RegistroParcelaService service) {
-		this.service = service;
-	}
+    public RegistroParcelaController(RegistroParcelaRepository repository) {
+        this.repository = repository;
+    }
 
-	@PostMapping("/registros/single")
-	@Operation(
-			summary = "Crear o actualizar un registro de parcela",
-			description = "Guarda un registro en public.registros_parcela. Si internal_key ya existe, actualiza los campos recibidos; internal_key es la clave única del registro. codigo_autogenerado es opcional y puede repetirse. dni_productor puede repetirse en distintos registros. n_parcela es generado automáticamente por la base de datos como DNI + secuencial y no necesita enviarse. Son obligatorios internal_key, dni_productor, nombres, geom, profesional_dni, datum, fecha_creacion, fecha_actualizacion y eliminado. DNI debe tener 8 dígitos; el celular del participante debe comenzar en 9 y tener 9 dígitos; sexo admite M o F; ubigeo debe tener 6 dígitos; superficie_midagri, si se informa, debe ser mayor que cero. geom admite WKT POINT, LINESTRING o POLYGON (2D o Z) en SRID 4326; aplica la migración SQL documentada para permitir estos tipos en PostGIS. centroide debe ser WKT POINT en SRID 4326. Las fechas-hora deben incluir offset ISO 8601. Las URLs HTTPS enviadas en los campos ruta_* se descargan desde hosts configurados, se guardan con UUID en el filesystem y se reemplazan por URLs del endpoint de fotos. No se admiten Base64.",
-			requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
-					required = true,
-					content = @Content(
-							mediaType = "application/json",
-							schema = @Schema(implementation = RegistroParcelaRequest.class),
-							examples = @ExampleObject(name = "Registro de parcela", value = """
-									{
-									  "internal_key": "id-local-del-registro",
-									  "codigo_autogenerado": "PAR-0001",
-									  "dni_productor": "12345678",
-									  "nombres": "Ana",
-									  "apellido_paterno": "Perez",
-									  "apellido_materno": "Garcia",
-									  "nombre_completo": "Ana Perez Garcia",
-									  "fecha_nacimiento": "1985-06-15",
-									  "sexo": "F",
-									  "celular_participante": "987654321",
-									  "tipo_productor": "Agricultor",
-									  "actividad_agraria": "Agricultura",
-									  "tipo_cultivo": "Cafe",
-									  "variedad": "01",
-									  "regimen_tenencia": "Propietario",
-									  "superficie_midagri": 2.5,
-									  "oficina_zonal": "La Merced",
-									  "ubigeo": "120101",
-									  "departamento": "Junin",
-									  "provincia": "Chanchamayo",
-									  "distrito": "La Merced",
-									  "caserio": "San Juan",
-									  "profesional_dni": "87654321",
-									  "profesional_nombres": "Luis",
-									  "profesional_apellidos": "Gomez Ruiz",
-									  "profesional_celular": "912345678",
-									  "profesional_email": "luis.gomez@devida.gob.pe",
-									  "geom": "POLYGON Z ((-77.00063113 -12.00041125 1250.5, -76.99936887 -12.00041125 1250.5, -76.99936887 -11.99958875 1250.5, -77.00063113 -11.99958875 1250.5, -77.00063113 -12.00041125 1250.5))",
-									  "centroide": "POINT(-77 -12)",
-									  "area_ha": 1.25,
-									  "perimetro_m": 456.78,
-									  "altitud": 1250.5,
-									  "fuente": "GPS",
-									  "datum": "WGS84",
-									  "observaciones": "Parcela levantada en campo",
-									  "ruta_dni_anverso": "https://almacenamiento/ruta/dni-anverso.jpg",
-									  "ruta_dni_reverso": "https://almacenamiento/ruta/dni-reverso.jpg",
-									  "ruta_foto1": "https://almacenamiento/ruta/foto1.jpg",
-									  "ruta_foto2": "https://almacenamiento/ruta/foto2.jpg",
-									  "ruta_foto3": "https://almacenamiento/ruta/foto3.jpg",
-									  "ruta_foto4": "https://almacenamiento/ruta/foto4.jpg",
-									  "ruta_foto5": "https://almacenamiento/ruta/foto5.jpg",
-									  "ruta_foto6": "https://almacenamiento/ruta/foto6.jpg",
-									  "device_uuid": "device-uuid",
-									  "fecha_captura": "2026-11-03T15:00:00-05:00",
-									  "fecha_creacion": "2026-11-03T15:00:00-05:00",
-									  "fecha_actualizacion": "2026-11-03T15:00:00-05:00",
-									  "eliminado": false
-									}
-									"""))),
-			responses = {
-					@ApiResponse(responseCode = "200", description = "Registro guardado correctamente"),
-					@ApiResponse(responseCode = "400", description = "Formato inválido o violación de una restricción de la tabla", content = @Content(
-							mediaType = "application/json",
-							examples = @ExampleObject(value = "{\"success\":false,\"error\":\"Los datos no cumplen las restricciones de registros_parcela.\"}"))),
-					@ApiResponse(responseCode = "502", description = "No fue posible obtener una imagen desde el host fuente configurado"),
-					@ApiResponse(responseCode = "500", description = "Error al acceder a la base de datos", content = @Content(
-							mediaType = "application/json",
-							examples = @ExampleObject(value = "{\"success\":false,\"error\":\"No se pudo completar la operación en la base de datos.\"}")))
-			})
-	public ResponseEntity<Map<String, Object>> guardar(@RequestBody JsonNode request) {
-		service.guardar(request);
-		return ResponseEntity.ok(Map.of("success", true, "message", "Registro guardado correctamente"));
-	}
+    @PostMapping
+    @Operation(
+            summary = "Crear o actualizar un registro de parcela",
+            description = "Guarda la parcela usando internalKey como clave. La geometría geom debe enviarse como WKT POINT, LINESTRING o POLYGON; el backend asigna SRID 4326. Las geometrías deben cumplir las restricciones PostGIS de validez y dimensión.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Registro guardado correctamente",
+                    content = @Content(mediaType = "application/json",
+                            examples = @ExampleObject(value = "{\"success\":true,\"id\":\"id-local-del-registro\"}"))),
+            @ApiResponse(responseCode = "400", description = "El cuerpo, la geometría WKT o los datos no cumplen las restricciones de la tabla"),
+            @ApiResponse(responseCode = "500", description = "Error al guardar el registro")
+    })
+    public ResponseEntity<Map<String, Object>> crearRegistro(@RequestBody RegistroParcelaDto dto) {
+        RegistroParcela entidad = mapDtoToEntity(dto);
+        RegistroParcela guardada = repository.save(entidad);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", true);
+        response.put("id", guardada.getInternalKey());
+        return ResponseEntity.ok(response);
+    }
 
-	@GetMapping("/api/registros")
-	@Operation(
-			summary = "Listar registros de parcela",
-			description = "Devuelve registros paginados, con la geometría también serializada como GeoJSON. Incluye registros marcados como eliminados.",
-			parameters = {
-					@Parameter(name = "page", in = ParameterIn.QUERY, description = "Número de página (desde 1). Debe ser mayor que cero.", example = "1", schema = @Schema(defaultValue = "1", minimum = "1")),
-					@Parameter(name = "limit", in = ParameterIn.QUERY, description = "Cantidad de registros por página. Debe ser mayor que cero.", example = "10", schema = @Schema(defaultValue = "10", minimum = "1")),
-					@Parameter(name = "dni_productor", in = ParameterIn.QUERY, description = "Filtro parcial e insensible a mayúsculas/minúsculas. Puede devolver varios registros asociados al mismo DNI.", example = "12345678")
-			},
-			responses = {
-					@ApiResponse(responseCode = "200", description = "Página de registros obtenida", content = @Content(
-							mediaType = "application/json",
-							examples = @ExampleObject(value = """
-									{
-									  "total": 1,
-									  "page": 1,
-									  "limit": 10,
-									  "totalPages": 1,
-									  "data": [
-									    {
-									      "internal_key": "id-local-del-registro",
-									      "dni_productor": "12345678",
-									      "nombres": "Ana",
-									      "geojson": {
-									        "type": "Polygon",
-									        "coordinates": [[[-77.0, -12.0, 0.0], [-76.9, -12.0, 0.0], [-76.9, -11.9, 0.0], [-77.0, -12.0, 0.0]]]
-									      }
-									    }
-									  ]
-									}
-									"""))),
-					@ApiResponse(responseCode = "400", description = "Parámetros de paginación inválidos")
-			})
-	public ResponseEntity<Map<String, Object>> listar(
-			@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "10") int limit,
-			@RequestParam(required = false, name = "dni_productor") String dniProductor) {
-		return ResponseEntity.ok(service.listar(page, limit, dniProductor));
-	}
+    @GetMapping
+    @Operation(
+            summary = "Listar parcelas activas",
+            description = "Devuelve una página de registros con eliminado=false. page empieza en 0; size admite valores de 1 a 100.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Página de parcelas obtenida",
+                    content = @Content(mediaType = "application/json",
+                            examples = @ExampleObject(value = "{\"success\":true,\"data\":[],\"page\":0,\"size\":50,\"total\":0,\"totalPages\":0}"))),
+            @ApiResponse(responseCode = "400", description = "Parámetros de paginación fuera de rango"),
+            @ApiResponse(responseCode = "500", description = "Error al consultar la base de datos")
+    })
+    public ResponseEntity<Map<String, Object>> listar(
+            @Parameter(description = "Número de página, comenzando en 0.", example = "0",
+                    schema = @Schema(minimum = "0", defaultValue = "0"))
+            @RequestParam(defaultValue = "0") int page,
+            @Parameter(description = "Cantidad de registros por página; máximo 100.", example = "50",
+                    schema = @Schema(minimum = "1", maximum = "100", defaultValue = "50"))
+            @RequestParam(defaultValue = "50") int size) {
+        if (page < 0 || size < 1 || size > 100) {
+            throw new IllegalArgumentException("La paginación debe tener page >= 0 y size entre 1 y 100.");
+        }
+
+        Page<RegistroParcela> result = repository.findAllByEliminadoFalse(PageRequest.of(page, size));
+        List<RegistroParcelaDto> data = result.getContent().stream()
+                .map(this::mapEntityToDto)
+                .toList();
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("success", true);
+        response.put("data", data);
+        response.put("page", result.getNumber());
+        response.put("size", result.getSize());
+        response.put("total", result.getTotalElements());
+        response.put("totalPages", result.getTotalPages());
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{internalKey}")
+    @Operation(
+            summary = "Obtener una parcela por clave",
+            description = "Devuelve el registro si existe y no está marcado como eliminado.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "Parcela encontrada",
+                    content = @Content(mediaType = "application/json",
+                            schema = @Schema(implementation = RegistroParcelaDto.class))),
+            @ApiResponse(responseCode = "404", description = "No existe una parcela activa con esa clave"),
+            @ApiResponse(responseCode = "500", description = "Error al consultar la base de datos")
+    })
+    public ResponseEntity<RegistroParcelaDto> obtener(
+            @Parameter(description = "Clave primaria internal_key de la parcela.", example = "id-local-del-registro")
+            @PathVariable String internalKey) {
+        return repository.findByInternalKeyAndEliminadoFalse(internalKey)
+                .map(registro -> ResponseEntity.ok(mapEntityToDto(registro)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @DeleteMapping("/{internalKey}")
+    @Operation(
+            summary = "Eliminar una parcela lógicamente",
+            description = "Marca eliminado=true y actualiza fecha_actualizacion. No borra físicamente la fila; los registros eliminados dejan de aparecer en las consultas GET.")
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "204", description = "Parcela marcada como eliminada"),
+            @ApiResponse(responseCode = "404", description = "No existe una parcela con esa clave"),
+            @ApiResponse(responseCode = "500", description = "Error al actualizar la parcela")
+    })
+    public ResponseEntity<Void> eliminar(
+            @Parameter(description = "Clave primaria internal_key de la parcela.", example = "id-local-del-registro")
+            @PathVariable String internalKey) {
+        int actualizados = repository.marcarEliminado(internalKey, OffsetDateTime.now());
+        return actualizados == 0 ? ResponseEntity.notFound().build() : ResponseEntity.noContent().build();
+    }
+
+    private RegistroParcela mapDtoToEntity(RegistroParcelaDto dto) {
+        RegistroParcela entidad = new RegistroParcela();
+        entidad.setInternalKey(dto.getInternalKey());
+        entidad.setCodigoAutogenerado(dto.getCodigoAutogenerado());
+        entidad.setDniProductor(dto.getDniProductor());
+        entidad.setNombres(dto.getNombres());
+        entidad.setApellidoPaterno(dto.getApellidoPaterno());
+        entidad.setApellidoMaterno(dto.getApellidoMaterno());
+        entidad.setNombreCompleto(dto.getNombreCompleto());
+        entidad.setFechaNacimiento(dto.getFechaNacimiento());
+        entidad.setSexo(dto.getSexo());
+        entidad.setCelularParticipante(dto.getCelularParticipante());
+        entidad.setTipoProductor(dto.getTipoProductor());
+        entidad.setActividadAgraria(dto.getActividadAgraria());
+        entidad.setTipoCultivo(dto.getTipoCultivo());
+        entidad.setVariedad(dto.getVariedad());
+        entidad.setRegimenTenencia(dto.getRegimenTenencia());
+        entidad.setSuperficieMidagri(dto.getSuperficieMidagri());
+        entidad.setOficinaZonal(dto.getOficinaZonal());
+        entidad.setUbigeo(dto.getUbigeo());
+        entidad.setDepartamento(dto.getDepartamento());
+        entidad.setProvincia(dto.getProvincia());
+        entidad.setDistrito(dto.getDistrito());
+        entidad.setCaserio(dto.getCaserio());
+        entidad.setFuente(dto.getFuente());
+        entidad.setDatum(dto.getDatum());
+        entidad.setObservaciones(dto.getObservaciones());
+        entidad.setProfesionalDni(dto.getProfesionalDni());
+        entidad.setProfesionalNombres(dto.getProfesionalNombres());
+        entidad.setProfesionalApellidos(dto.getProfesionalApellidos());
+        entidad.setProfesionalCelular(dto.getProfesionalCelular());
+        entidad.setProfesionalEmail(dto.getProfesionalEmail());
+        entidad.setRutaDniAnverso(dto.getRutaDniAnverso());
+        entidad.setRutaDniReverso(dto.getRutaDniReverso());
+        entidad.setRutaFoto1(dto.getRutaFoto1());
+        entidad.setRutaFoto2(dto.getRutaFoto2());
+        entidad.setRutaFoto3(dto.getRutaFoto3());
+        entidad.setRutaFoto4(dto.getRutaFoto4());
+        entidad.setRutaFoto5(dto.getRutaFoto5());
+        entidad.setRutaFoto6(dto.getRutaFoto6());
+        entidad.setGeom(parseGeometry(dto.getGeom()));
+        entidad.setCentroide(parsePoint(dto.getCentroide()));
+        entidad.setAreaHa(dto.getAreaHa());
+        entidad.setPerimetroM(dto.getPerimetroM());
+        entidad.setAltitud(dto.getAltitud());
+        entidad.setDeviceUuid(dto.getDeviceUuid());
+        entidad.setFechaCaptura(dto.getFechaCaptura());
+        entidad.setFechaCreacion(dto.getFechaCreacion());
+        entidad.setFechaActualizacion(dto.getFechaActualizacion());
+        entidad.setEliminado(dto.getEliminado());
+        return entidad;
+    }
+
+    private RegistroParcelaDto mapEntityToDto(RegistroParcela entidad) {
+        RegistroParcelaDto dto = new RegistroParcelaDto();
+        dto.setInternalKey(entidad.getInternalKey());
+        dto.setCodigoAutogenerado(entidad.getCodigoAutogenerado());
+        dto.setDniProductor(entidad.getDniProductor());
+        dto.setNParcela(entidad.getNParcela());
+        dto.setNombres(entidad.getNombres());
+        dto.setApellidoPaterno(entidad.getApellidoPaterno());
+        dto.setApellidoMaterno(entidad.getApellidoMaterno());
+        dto.setNombreCompleto(entidad.getNombreCompleto());
+        dto.setFechaNacimiento(entidad.getFechaNacimiento());
+        dto.setSexo(entidad.getSexo());
+        dto.setCelularParticipante(entidad.getCelularParticipante());
+        dto.setTipoProductor(entidad.getTipoProductor());
+        dto.setActividadAgraria(entidad.getActividadAgraria());
+        dto.setTipoCultivo(entidad.getTipoCultivo());
+        dto.setVariedad(entidad.getVariedad());
+        dto.setRegimenTenencia(entidad.getRegimenTenencia());
+        dto.setSuperficieMidagri(entidad.getSuperficieMidagri());
+        dto.setOficinaZonal(entidad.getOficinaZonal());
+        dto.setUbigeo(entidad.getUbigeo());
+        dto.setDepartamento(entidad.getDepartamento());
+        dto.setProvincia(entidad.getProvincia());
+        dto.setDistrito(entidad.getDistrito());
+        dto.setCaserio(entidad.getCaserio());
+        dto.setFuente(entidad.getFuente());
+        dto.setDatum(entidad.getDatum());
+        dto.setObservaciones(entidad.getObservaciones());
+        dto.setProfesionalDni(entidad.getProfesionalDni());
+        dto.setProfesionalNombres(entidad.getProfesionalNombres());
+        dto.setProfesionalApellidos(entidad.getProfesionalApellidos());
+        dto.setProfesionalCelular(entidad.getProfesionalCelular());
+        dto.setProfesionalEmail(entidad.getProfesionalEmail());
+        dto.setRutaDniAnverso(entidad.getRutaDniAnverso());
+        dto.setRutaDniReverso(entidad.getRutaDniReverso());
+        dto.setRutaFoto1(entidad.getRutaFoto1());
+        dto.setRutaFoto2(entidad.getRutaFoto2());
+        dto.setRutaFoto3(entidad.getRutaFoto3());
+        dto.setRutaFoto4(entidad.getRutaFoto4());
+        dto.setRutaFoto5(entidad.getRutaFoto5());
+        dto.setRutaFoto6(entidad.getRutaFoto6());
+        dto.setGeom(toWkt(entidad.getGeom()));
+        dto.setCentroide(toWkt(entidad.getCentroide()));
+        dto.setAreaHa(entidad.getAreaHa());
+        dto.setPerimetroM(entidad.getPerimetroM());
+        dto.setAltitud(entidad.getAltitud());
+        dto.setDeviceUuid(entidad.getDeviceUuid());
+        dto.setFechaCaptura(entidad.getFechaCaptura());
+        dto.setFechaCreacion(entidad.getFechaCreacion());
+        dto.setFechaActualizacion(entidad.getFechaActualizacion());
+        dto.setEliminado(entidad.getEliminado());
+        return dto;
+    }
+
+    private Geometry parseGeometry(String wkt) {
+        if (wkt == null || wkt.isBlank()) {
+            throw new IllegalArgumentException("La geometría de parcela es obligatoria.");
+        }
+        try {
+            Geometry geometry = new WKTReader(GEOMETRY_FACTORY).read(wkt);
+            geometry.setSRID(4326);
+            String type = geometry.getGeometryType();
+            if (!type.equals("Point") && !type.equals("LineString") && !type.equals("Polygon")) {
+                throw new IllegalArgumentException("La geometría debe ser POINT, LINESTRING o POLYGON.");
+            }
+            int dimension = coordinateDimension(geometry);
+            if (dimension != 2 && dimension != 3) {
+                throw new IllegalArgumentException("La geometría debe tener 2 o 3 dimensiones.");
+            }
+            if (!geometry.isValid()) {
+                throw new IllegalArgumentException("La geometría de parcela no es válida.");
+            }
+            return geometry;
+        } catch (ParseException exception) {
+            throw new IllegalArgumentException("La geometría de parcela debe tener formato WKT válido.", exception);
+        }
+    }
+
+    private Point parsePoint(String wkt) {
+        if (wkt == null || wkt.isBlank()) {
+            return null;
+        }
+        Geometry geometry;
+        try {
+            geometry = new WKTReader(GEOMETRY_FACTORY).read(wkt);
+        } catch (ParseException exception) {
+            throw new IllegalArgumentException("El centroide debe tener formato WKT POINT válido.", exception);
+        }
+        if (!(geometry instanceof Point point)) {
+            throw new IllegalArgumentException("El centroide debe ser de tipo POINT.");
+        }
+        if (coordinateDimension(point.getCoordinateSequence()) != 2) {
+            throw new IllegalArgumentException("El centroide debe tener 2 dimensiones.");
+        }
+        point.setSRID(4326);
+        return point;
+    }
+
+    private int coordinateDimension(Geometry geometry) {
+        if (geometry instanceof Point point) {
+            return coordinateDimension(point.getCoordinateSequence());
+        }
+        if (geometry instanceof LineString lineString) {
+            return coordinateDimension(lineString.getCoordinateSequence());
+        }
+        if (geometry instanceof Polygon polygon) {
+            return coordinateDimension(polygon.getExteriorRing().getCoordinateSequence());
+        }
+        throw new IllegalArgumentException("El tipo de geometría no está permitido.");
+    }
+
+    private int coordinateDimension(CoordinateSequence sequence) {
+        int measures = sequence.getMeasures();
+        int spatialDimension = sequence.getDimension() - measures;
+        if (spatialDimension == 3) {
+            boolean hasZ = false;
+            for (int i = 0; i < sequence.size(); i++) {
+                if (!Double.isNaN(sequence.getZ(i))) {
+                    hasZ = true;
+                    break;
+                }
+            }
+            return (hasZ ? 3 : 2) + measures;
+        }
+        return sequence.getDimension();
+    }
+
+    private String toWkt(Geometry geometry) {
+        return geometry == null ? null : new WKTWriter().write(geometry);
+    }
 }

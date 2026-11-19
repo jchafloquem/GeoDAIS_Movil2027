@@ -9,6 +9,6 @@ import io.swagger.v3.oas.annotations.info.Info;
 @OpenAPIDefinition(info = @Info(
 		title = "GeoDAIS Móvil API",
 		version = "1.0.0",
-		description = "API para sincronizar y consultar registros de parcelas de GeoDAIS Móvil."))
+		description = "API para registrar, consultar y marcar como eliminados lógicamente los registros de parcelas almacenados en public.registros_parcela y consultar participantes de public.participante."))
 public class OpenApiConfig {
 }
