@@ -1,6 +1,90 @@
 # GeoDAISMovil
 
-Backend Spring Boot para sincronizar registros de parcela con PostgreSQL/PostGIS.
+Backend Spring Boot para sincronizar registros de parcela, consultar participantes y entregar fotografías; persiste los datos en PostgreSQL/PostGIS.
+
+## Estructura del proyecto
+
+```text
+GeoDAISMovil/
+├── database/                         # Scripts SQL de actualización del esquema
+├── src/
+│   ├── main/
+│   │   ├── java/pe/gob/devida/geodaismovil/
+│   │   │   ├── config/               # Configuración web, OpenAPI y fotos
+│   │   │   ├── controller/           # Endpoints REST
+│   │   │   ├── dto/                  # Contratos de transferencia de datos
+│   │   │   ├── exception/            # Excepciones y respuestas HTTP de error
+│   │   │   ├── model/                # Entidades JPA
+│   │   │   ├── repository/           # Acceso a datos con Spring Data JPA
+│   │   │   ├── service/              # Importación de participantes y almacenamiento de fotos
+│   │   │   ├── GeoDaisMovilApplication.java
+│   │   │   └── ServletInitializer.java
+│   │   └── resources/
+│   │       └── application.properties
+│   └── test/java/pe/gob/devida/geodaismovil/
+│       ├── controller/               # Pruebas de endpoints
+│       └── service/                  # Pruebas de servicios
+├── mvnw, mvnw.cmd                    # Maven Wrapper
+└── pom.xml                           # Dependencias y configuración de compilación
+```
+
+### Diagrama de componentes
+
+```mermaid
+flowchart LR
+    cliente["Aplicación móvil / cliente HTTP"]
+
+    subgraph backend["GeoDAISMovil — Spring Boot"]
+        subgraph api["Capa REST"]
+            parcelas["RegistroParcelaController"]
+            participantes["ParticipanteController"]
+            fotos["PhotoController"]
+        end
+
+        subgraph servicios["Servicios"]
+            servicioParticipantes["ParticipanteService"]
+            servicioFotos["PhotoStorageService"]
+        end
+
+        subgraph persistencia["Persistencia JPA"]
+            repoParcelas["RegistroParcelaRepository"]
+            repoParticipantes["ParticipanteRepository"]
+        end
+
+        errores["ApiExceptionHandler"]
+        openapi["Springdoc — Swagger UI / OpenAPI"]
+        configOpenapi["OpenApiConfig"]
+        configFotos["PhotoStorageProperties"]
+    end
+
+    postgres[("PostgreSQL / PostGIS")]
+    filesystem[("Filesystem de fotografías")]
+
+    cliente -->|"HTTP: JSON"| parcelas
+    cliente -->|"HTTP: búsqueda DNI / CSV multipart"| participantes
+    cliente -->|"HTTP: GET imagen por UUID"| fotos
+
+    parcelas --> repoParcelas
+    repoParcelas --> postgres
+    participantes --> servicioParticipantes
+    servicioParticipantes --> repoParticipantes
+    repoParticipantes --> postgres
+    fotos --> servicioFotos
+    servicioFotos --> filesystem
+    configFotos -.-> servicioFotos
+
+    parcelas -.->|errores REST| errores
+    participantes -.->|errores REST| errores
+    fotos -.->|errores REST| errores
+
+    configOpenapi --> openapi
+    parcelas -.->|anotaciones OpenAPI| openapi
+    participantes -.->|anotaciones OpenAPI| openapi
+    fotos -.->|anotaciones OpenAPI| openapi
+    cliente --> openapi
+```
+
+El cliente consume los controladores REST. Los repositorios manejan las entidades `registros_parcela` y `participante`; las fotografías se leen desde el filesystem mediante `PhotoStorageService`. `ApiExceptionHandler` centraliza las respuestas de error y Springdoc publica la documentación de los controladores.
 
 ## Configuración
 
@@ -29,23 +113,25 @@ Con el servicio iniciado, abre Swagger UI en [http://localhost:8080/swagger-ui.h
 
 ## Endpoints
 
-- `POST /geodaismovil/registros/single`: crea o actualiza el registro identificado por `internal_key`. Recibe en snake_case los campos definidos en `RegistroParcelaRequest` y muestra un ejemplo completo en Swagger, incluidos `codigo_autogenerado`, geometrías y métricas calculadas, timestamps y `eliminado`. `geom` acepta WKT `POINT`, `LINESTRING` o `POLYGON` (2D o Z) en SRID 4326; `centroide` es WKT de punto. Las fechas deben usar formato ISO (`yyyy-MM-dd` para `fecha_nacimiento` y fecha-hora con offset para timestamps). `eliminado` debe ser booleano JSON. Los valores HTTPS en `ruta_dni_anverso`, `ruta_dni_reverso` y `ruta_foto1` a `ruta_foto6` se descargan desde un host configurado en `GEODAIS_PHOTO_ALLOWED_HOSTS`, se guardan en el filesystem con UUID único y se reemplazan por la URL de lectura `/geodaismovil/api/fotos/{uuid}`. Solo se admiten imágenes JPEG o PNG de hasta 10 MiB; no se acepta Base64. Si se omite un campo de foto en una actualización, se conserva su valor anterior.
-- `dni_productor` se valida como un DNI peruano de 8 dígitos, pero no es único: se permiten varios registros de parcela para la misma persona. `n_parcela` se genera en la base de datos como DNI + secuencial (por ejemplo, `12345678_1`); el móvil no necesita enviarlo. `internal_key` siempre es único y determina los upserts; `codigo_autogenerado` es opcional y puede repetirse.
-- `GET /geodaismovil/api/registros?page=1&limit=10&dni_productor=123`: devuelve resultados paginados, `total`, `totalPages` y `geojson` en cada registro. `dni_productor` permite filtro parcial, insensible a mayúsculas. Se incluyen registros con `eliminado = true`.
-- `GET /api/participantes?dni=12345678`: busca por coincidencia exacta de DNI y devuelve todos los campos de los registros encontrados, ordenados por `id_participante`. Si no hay coincidencias, devuelve una lista vacía. Si el backend está desplegado bajo un contexto de aplicación, ese contexto se antepone a la ruta.
-- `GET /geodaismovil/api/fotos/{uuid}`: entrega el archivo JPEG/PNG asociado al UUID. El UUID se persiste en la URL de `ruta_*` de la parcela y por ello queda relacionado con su geometría. La URL debe tratarse como una referencia de acceso no predecible; configure autenticación/red privada si se requiere control de acceso por usuario.
+- `POST /api/parcelas`: crea o actualiza un registro usando `internalKey`. Recibe un `RegistroParcelaDto` JSON. `geom` acepta WKT `POINT`, `LINESTRING` o `POLYGON` (2D o Z) en SRID 4326; `centroide` acepta WKT `POINT`.
+- `GET /api/parcelas?page=0&size=50`: devuelve una página de parcelas activas. `page` comienza en 0 y `size` debe estar entre 1 y 100.
+- `GET /api/parcelas/{internalKey}`: obtiene una parcela que no esté marcada como eliminada.
+- `DELETE /api/parcelas/{internalKey}`: marca la parcela como eliminada; no borra físicamente la fila.
+- `GET /api/participantes?dni=12345678`: busca coincidencias exactas de DNI y devuelve los campos de los registros ordenados por `id_participante`. Sin coincidencias, devuelve una lista vacía.
+- `POST /api/participantes/csv`: importa registros de participantes desde `multipart/form-data`, con el archivo en el campo `file`. El CSV debe ser UTF-8 y contener los encabezados de `public.participante` excepto `id_participante` (autogenerado), en cualquier orden: `poa_pta`, `actividad`, `departamento`, `provincia`, `distrito`, `nombre_lugar_intervencion`, `categoria_lugar`, `categoria_comunidad`, `apellido_paterno`, `apellido_materno`, `nombres`, `dni`, `fecha_nacimiento`, `sexo`, `cultivo_asistido`. La fecha usa `yyyy-MM-dd`; los campos vacíos se guardan como `null`. Si una fila no cumple la estructura o los límites de longitud de la tabla, se rechaza el archivo completo.
+- `GET /geodaismovil/api/fotos/{uuid}`: entrega la imagen JPEG o PNG almacenada con ese UUID.
 
 Ejemplo mínimo para POST:
 
 ```json
 {
-  "internal_key": "id-local-del-registro",
-  "dni_productor": "12345678",
+  "internalKey": "id-local-del-registro",
+  "dniProductor": "12345678",
   "nombres": "Ana",
-  "profesional_dni": "87654321",
+  "profesionalDni": "87654321",
   "geom": "POLYGON Z ((-77  -12 0, -76.9 -12 0, -76.9 -11.9 0, -77 -12 0))",
-  "ruta_foto1": "https://almacenamiento/ruta/foto.jpg"
+  "rutaFoto1": "ruta/foto.jpg"
 }
 ```
 
-Los campos no enviados pueden continuar usando los valores predeterminados de la tabla. El backend no depende de un trigger para completar datos: `nombre_completo`, `centroide`, `area_ha` y `perimetro_m` deben incluirse en la solicitud si el cliente móvil es responsable de calcularlos.
+Los nombres JSON de `RegistroParcelaDto` usan camelCase. El ejemplo ilustra los campos principales; consulta Swagger para el esquema completo. La base de datos genera `n_parcela`; no lo envíes al crear registros.
