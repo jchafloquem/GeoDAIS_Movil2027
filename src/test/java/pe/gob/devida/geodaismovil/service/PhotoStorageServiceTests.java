@@ -89,6 +89,35 @@ class PhotoStorageServiceTests {
 	}
 
 	@Test
+	void guardaImagenBase64SinDependerDeUnaUrlExterna() {
+		PhotoStorageService.StoredPhoto stored = service.storeBase64(
+				java.util.Base64.getEncoder().encodeToString(PNG_IMAGE), "80173104", "foto1");
+
+		assertTrue(stored.reference().startsWith("https://api.example.test/geodaismovil/api/fotos/"));
+		assertTrue(stored.path().getFileName().toString()
+				.matches(stored.id() + "_dni_80173104_foto1\\.png"));
+		assertTrue(Files.isRegularFile(stored.path()));
+		assertEquals(MediaType.IMAGE_PNG, service.load(stored.id()).mediaType());
+		verifyNoInteractions(httpClient);
+	}
+
+	@Test
+	void rechazaContenidoQueNoEsBase64Valido() {
+		assertThrows(IllegalArgumentException.class,
+				() -> service.storeBase64("not-base64!", "80173104", "foto1"));
+		verifyNoInteractions(httpClient);
+	}
+
+	@Test
+	void rechazaDniOTipoDeFotoFueraDelFormatoPermitido() {
+		String encodedImage = java.util.Base64.getEncoder().encodeToString(PNG_IMAGE);
+
+		assertThrows(IllegalArgumentException.class, () -> service.storeBase64(encodedImage, "1234", "foto1"));
+		assertThrows(IllegalArgumentException.class, () -> service.storeBase64(encodedImage, "80173104", "foto7"));
+		verifyNoInteractions(httpClient);
+	}
+
+	@Test
 	void devuelve404ParaUuidSinArchivo() {
 		assertThrows(pe.gob.devida.geodaismovil.exception.PhotoStorageException.class,
 				() -> service.load(UUID.randomUUID()));

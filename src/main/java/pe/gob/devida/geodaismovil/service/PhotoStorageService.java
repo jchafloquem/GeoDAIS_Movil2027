@@ -10,6 +10,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
@@ -17,6 +18,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
@@ -43,6 +45,8 @@ public class PhotoStorageService {
 	private static final Set<String> PHOTO_FIELDS = Set.of(
 			"ruta_dni_anverso", "ruta_dni_reverso", "ruta_foto1", "ruta_foto2", "ruta_foto3",
 			"ruta_foto4", "ruta_foto5", "ruta_foto6");
+	private static final Set<String> PHOTO_KINDS = Set.of(
+			"dni_anverso", "dni_reverso", "foto1", "foto2", "foto3", "foto4", "foto5", "foto6");
 	private static final long MAX_IMAGE_PIXELS = 20_000_000;
 
 	private final PhotoStorageProperties properties;
@@ -97,9 +101,26 @@ public class PhotoStorageService {
 
 	public PhotoContent load(UUID id) {
 		for (String extension : List.of("jpg", "png")) {
-			Path file = storageDirectory.resolve(id + "." + extension).normalize();
-			if (file.startsWith(storageDirectory) && Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
-				return new PhotoContent(file, extension.equals("jpg") ? MediaType.IMAGE_JPEG : MediaType.IMAGE_PNG);
+			Path legacyFile = storageDirectory.resolve(id + "." + extension).normalize();
+			if (legacyFile.startsWith(storageDirectory)
+					&& Files.isRegularFile(legacyFile, LinkOption.NOFOLLOW_LINKS)) {
+				return new PhotoContent(legacyFile,
+						extension.equals("jpg") ? MediaType.IMAGE_JPEG : MediaType.IMAGE_PNG);
+			}
+
+			if (Files.isDirectory(storageDirectory, LinkOption.NOFOLLOW_LINKS)) {
+				try (DirectoryStream<Path> matches = Files.newDirectoryStream(storageDirectory, id + "_*." + extension)) {
+					for (Path file : matches) {
+						if (file.startsWith(storageDirectory)
+								&& Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+							return new PhotoContent(file,
+									extension.equals("jpg") ? MediaType.IMAGE_JPEG : MediaType.IMAGE_PNG);
+						}
+					}
+				} catch (IOException exception) {
+					throw new PhotoStorageException(HttpStatus.INTERNAL_SERVER_ERROR,
+							"No se pudo acceder al directorio de fotografías.", exception);
+				}
 			}
 		}
 		throw new PhotoStorageException(HttpStatus.NOT_FOUND, "No se encontró la imagen solicitada.");
@@ -109,8 +130,46 @@ public class PhotoStorageService {
 		URI source = validateSource(reference);
 		byte[] imageBytes = download(source);
 		ImageFormat imageFormat = validateImage(imageBytes);
+		return storeImage(imageBytes, imageFormat);
+	}
+
+	public StoredPhoto storeBase64(String encodedImage, String dniProductor, String photoKind) {
+		if (encodedImage == null || encodedImage.isBlank()) {
+			throw new IllegalArgumentException("El contenido de la foto es obligatorio.");
+		}
+		if (dniProductor == null || !dniProductor.matches("\\d{8}")) {
+			throw new IllegalArgumentException("El DNI del productor debe tener exactamente 8 dígitos.");
+		}
+		if (photoKind == null || !PHOTO_KINDS.contains(photoKind)) {
+			throw new IllegalArgumentException("El tipo de foto debe ser dni_anverso, dni_reverso o foto1 a foto6.");
+		}
+		long maxEncodedLength = ((properties.getMaxBytes() + 2) / 3) * 4;
+		if (encodedImage.length() > maxEncodedLength) {
+			throw new IllegalArgumentException("La imagen excede el tamaño máximo permitido.");
+		}
+
+		byte[] imageBytes;
+		try {
+			imageBytes = Base64.getDecoder().decode(encodedImage);
+		} catch (IllegalArgumentException exception) {
+			throw new IllegalArgumentException("El contenido de la foto no está codificado en Base64 válido.", exception);
+		}
+		if (imageBytes.length == 0 || imageBytes.length > properties.getMaxBytes()) {
+			throw new IllegalArgumentException("La imagen excede el tamaño máximo permitido o está vacía.");
+		}
+		return storeImage(imageBytes, validateImage(imageBytes, HttpStatus.BAD_REQUEST),
+				"dni_" + dniProductor + "_" + photoKind);
+	}
+
+	private StoredPhoto storeImage(byte[] imageBytes, ImageFormat imageFormat) {
+		return storeImage(imageBytes, imageFormat, null);
+	}
+
+	private StoredPhoto storeImage(byte[] imageBytes, ImageFormat imageFormat, String fileNamePrefix) {
 		UUID id = UUID.randomUUID();
-		Path file = storageDirectory.resolve(id + "." + imageFormat.extension()).normalize();
+		String fileName = (fileNamePrefix == null ? id : id + "_" + fileNamePrefix)
+				+ "." + imageFormat.extension();
+		Path file = storageDirectory.resolve(fileName).normalize();
 		if (!file.startsWith(storageDirectory)) {
 			throw new PhotoStorageException(HttpStatus.INTERNAL_SERVER_ERROR,
 					"La ruta de almacenamiento configurada no es válida.");
@@ -223,6 +282,10 @@ public class PhotoStorageService {
 	}
 
 	private ImageFormat validateImage(byte[] bytes) {
+		return validateImage(bytes, HttpStatus.BAD_GATEWAY);
+	}
+
+	private ImageFormat validateImage(byte[] bytes, HttpStatus invalidImageStatus) {
 		try (ImageInputStream input = ImageIO.createImageInputStream(new ByteArrayInputStream(bytes))) {
 			if (input == null) {
 				throw new IOException("No se pudo leer el contenido de la imagen.");
@@ -248,7 +311,7 @@ public class PhotoStorageService {
 				reader.dispose();
 			}
 		} catch (IOException exception) {
-			throw new PhotoStorageException(HttpStatus.BAD_GATEWAY,
+			throw new PhotoStorageException(invalidImageStatus,
 					"El archivo descargado está dañado o no es una imagen válida.", exception);
 		}
 	}

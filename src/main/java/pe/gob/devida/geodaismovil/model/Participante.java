@@ -87,4 +87,132 @@ public class Participante {
     @Column(name = "cultivo_asistido", length = 150)
     @Schema(description = "Cultivo asistido.", maxLength = 150, example = "Café")
     private String cultivoAsistido;
+
+    public Integer getIdParticipante() {
+        return idParticipante;
+    }
+
+    public void setIdParticipante(Integer idParticipante) {
+        this.idParticipante = idParticipante;
+    }
+
+    public String getPoaPta() {
+        return poaPta;
+    }
+
+    public void setPoaPta(String poaPta) {
+        this.poaPta = poaPta;
+    }
+
+    public String getActividad() {
+        return actividad;
+    }
+
+    public void setActividad(String actividad) {
+        this.actividad = actividad;
+    }
+
+    public String getDepartamento() {
+        return departamento;
+    }
+
+    public void setDepartamento(String departamento) {
+        this.departamento = departamento;
+    }
+
+    public String getProvincia() {
+        return provincia;
+    }
+
+    public void setProvincia(String provincia) {
+        this.provincia = provincia;
+    }
+
+    public String getDistrito() {
+        return distrito;
+    }
+
+    public void setDistrito(String distrito) {
+        this.distrito = distrito;
+    }
+
+    public String getNombreLugarIntervencion() {
+        return nombreLugarIntervencion;
+    }
+
+    public void setNombreLugarIntervencion(String nombreLugarIntervencion) {
+        this.nombreLugarIntervencion = nombreLugarIntervencion;
+    }
+
+    public String getCategoriaLugar() {
+        return categoriaLugar;
+    }
+
+    public void setCategoriaLugar(String categoriaLugar) {
+        this.categoriaLugar = categoriaLugar;
+    }
+
+    public String getCategoriaComunidad() {
+        return categoriaComunidad;
+    }
+
+    public void setCategoriaComunidad(String categoriaComunidad) {
+        this.categoriaComunidad = categoriaComunidad;
+    }
+
+    public String getApellidoPaterno() {
+        return apellidoPaterno;
+    }
+
+    public void setApellidoPaterno(String apellidoPaterno) {
+        this.apellidoPaterno = apellidoPaterno;
+    }
+
+    public String getApellidoMaterno() {
+        return apellidoMaterno;
+    }
+
+    public void setApellidoMaterno(String apellidoMaterno) {
+        this.apellidoMaterno = apellidoMaterno;
+    }
+
+    public String getNombres() {
+        return nombres;
+    }
+
+    public void setNombres(String nombres) {
+        this.nombres = nombres;
+    }
+
+    public String getDni() {
+        return dni;
+    }
+
+    public void setDni(String dni) {
+        this.dni = dni;
+    }
+
+    public LocalDate getFechaNacimiento() {
+        return fechaNacimiento;
+    }
+
+    public void setFechaNacimiento(LocalDate fechaNacimiento) {
+        this.fechaNacimiento = fechaNacimiento;
+    }
+
+    public String getSexo() {
+        return sexo;
+    }
+
+    public void setSexo(String sexo) {
+        this.sexo = sexo;
+    }
+
+    public String getCultivoAsistido() {
+        return cultivoAsistido;
+    }
+
+    public void setCultivoAsistido(String cultivoAsistido) {
+        this.cultivoAsistido = cultivoAsistido;
+    }
 }
