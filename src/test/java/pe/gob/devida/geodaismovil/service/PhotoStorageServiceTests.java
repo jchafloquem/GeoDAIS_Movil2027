@@ -64,7 +64,8 @@ class PhotoStorageServiceTests {
 		assertEquals(1, stored.size());
 		UUID id = stored.get(0).id();
 		assertEquals("https://api.example.test/geodaismovil/api/fotos/" + id, values.get("ruta_foto1"));
-		assertTrue(Files.isRegularFile(tempDirectory.resolve(id + ".png")));
+		assertTrue(stored.get(0).path().getParent().getFileName().toString().matches("\\d{4}-\\d{2}-\\d{2}"));
+		assertTrue(Files.isRegularFile(stored.get(0).path()));
 		assertEquals(MediaType.IMAGE_PNG, service.load(id).mediaType());
 	}
 
@@ -96,9 +97,19 @@ class PhotoStorageServiceTests {
 		assertTrue(stored.reference().startsWith("https://api.example.test/geodaismovil/api/fotos/"));
 		assertTrue(stored.path().getFileName().toString()
 				.matches(stored.id() + "_dni_80173104_foto1\\.png"));
+		assertTrue(stored.path().getParent().getFileName().toString().matches("\\d{4}-\\d{2}-\\d{2}"));
 		assertTrue(Files.isRegularFile(stored.path()));
 		assertEquals(MediaType.IMAGE_PNG, service.load(stored.id()).mediaType());
 		verifyNoInteractions(httpClient);
+	}
+
+	@Test
+	void sigueLeyendoFotosGuardadasEnElDirectorioRaiz() throws Exception {
+		UUID id = UUID.randomUUID();
+		Path legacyPhoto = tempDirectory.resolve(id + ".png");
+		Files.write(legacyPhoto, PNG_IMAGE);
+
+		assertEquals(legacyPhoto, service.load(id).path());
 	}
 
 	@Test

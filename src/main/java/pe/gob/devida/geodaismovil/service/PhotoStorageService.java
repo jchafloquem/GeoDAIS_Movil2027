@@ -17,6 +17,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Iterator;
@@ -48,6 +50,7 @@ public class PhotoStorageService {
 	private static final Set<String> PHOTO_KINDS = Set.of(
 			"dni_anverso", "dni_reverso", "foto1", "foto2", "foto3", "foto4", "foto5", "foto6");
 	private static final long MAX_IMAGE_PIXELS = 20_000_000;
+	private static final ZoneId STORAGE_TIME_ZONE = ZoneId.of("America/Lima");
 
 	private final PhotoStorageProperties properties;
 	private final HttpClient httpClient;
@@ -101,20 +104,22 @@ public class PhotoStorageService {
 
 	public PhotoContent load(UUID id) {
 		for (String extension : List.of("jpg", "png")) {
-			Path legacyFile = storageDirectory.resolve(id + "." + extension).normalize();
-			if (legacyFile.startsWith(storageDirectory)
-					&& Files.isRegularFile(legacyFile, LinkOption.NOFOLLOW_LINKS)) {
-				return new PhotoContent(legacyFile,
-						extension.equals("jpg") ? MediaType.IMAGE_JPEG : MediaType.IMAGE_PNG);
-			}
-
 			if (Files.isDirectory(storageDirectory, LinkOption.NOFOLLOW_LINKS)) {
-				try (DirectoryStream<Path> matches = Files.newDirectoryStream(storageDirectory, id + "_*." + extension)) {
-					for (Path file : matches) {
-						if (file.startsWith(storageDirectory)
-								&& Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
-							return new PhotoContent(file,
-									extension.equals("jpg") ? MediaType.IMAGE_JPEG : MediaType.IMAGE_PNG);
+				try {
+					PhotoContent photo = findPhotoInDirectory(storageDirectory, id, extension);
+					if (photo != null) {
+						return photo;
+					}
+
+					try (DirectoryStream<Path> directories = Files.newDirectoryStream(storageDirectory)) {
+						for (Path directory : directories) {
+							if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) {
+								continue;
+							}
+							photo = findPhotoInDirectory(directory, id, extension);
+							if (photo != null) {
+								return photo;
+							}
 						}
 					}
 				} catch (IOException exception) {
@@ -124,6 +129,25 @@ public class PhotoStorageService {
 			}
 		}
 		throw new PhotoStorageException(HttpStatus.NOT_FOUND, "No se encontró la imagen solicitada.");
+	}
+
+	private PhotoContent findPhotoInDirectory(Path directory, UUID id, String extension) throws IOException {
+		Path directFile = directory.resolve(id + "." + extension);
+		if (directFile.startsWith(directory)
+				&& Files.isRegularFile(directFile, LinkOption.NOFOLLOW_LINKS)) {
+			return new PhotoContent(directFile,
+					extension.equals("jpg") ? MediaType.IMAGE_JPEG : MediaType.IMAGE_PNG);
+		}
+
+		try (DirectoryStream<Path> matches = Files.newDirectoryStream(directory, id + "_*." + extension)) {
+			for (Path file : matches) {
+				if (file.startsWith(directory) && Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
+					return new PhotoContent(file,
+							extension.equals("jpg") ? MediaType.IMAGE_JPEG : MediaType.IMAGE_PNG);
+				}
+			}
+		}
+		return null;
 	}
 
 	private StoredPhoto store(String reference) {
@@ -169,15 +193,16 @@ public class PhotoStorageService {
 		UUID id = UUID.randomUUID();
 		String fileName = (fileNamePrefix == null ? id : id + "_" + fileNamePrefix)
 				+ "." + imageFormat.extension();
-		Path file = storageDirectory.resolve(fileName).normalize();
-		if (!file.startsWith(storageDirectory)) {
+		Path dateDirectory = storageDirectory.resolve(LocalDate.now(STORAGE_TIME_ZONE).toString()).normalize();
+		Path file = dateDirectory.resolve(fileName).normalize();
+		if (!dateDirectory.startsWith(storageDirectory) || !file.startsWith(dateDirectory)) {
 			throw new PhotoStorageException(HttpStatus.INTERNAL_SERVER_ERROR,
 					"La ruta de almacenamiento configurada no es válida.");
 		}
 
 		try {
-			Files.createDirectories(storageDirectory);
-			Path temporaryFile = Files.createTempFile(storageDirectory, ".photo-", ".tmp");
+			Files.createDirectories(dateDirectory);
+			Path temporaryFile = Files.createTempFile(dateDirectory, ".photo-", ".tmp");
 			try {
 				Files.write(temporaryFile, imageBytes, StandardOpenOption.TRUNCATE_EXISTING,
 						StandardOpenOption.WRITE);

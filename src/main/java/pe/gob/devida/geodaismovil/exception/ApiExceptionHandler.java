@@ -16,6 +16,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import pe.gob.devida.geodaismovil.exception.PhotoStorageException;
 
@@ -77,6 +78,11 @@ public class ApiExceptionHandler {
 	public ResponseEntity<Map<String, Object>> handleTypeMismatch(MethodArgumentTypeMismatchException exception) {
 		logger.warn("Tipo de argumento no coincide: {} = {}", exception.getName(), exception.getValue());
 		return ResponseEntity.badRequest().body(error("El parámetro '" + exception.getName() + "' tiene un formato inválido."));
+	}
+
+	@ExceptionHandler(NoResourceFoundException.class)
+	public ResponseEntity<Map<String, Object>> handleResourceNotFound(NoResourceFoundException exception) {
+		return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error("Recurso no encontrado."));
 	}
 
 	@ExceptionHandler(Exception.class)
